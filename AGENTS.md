@@ -39,3 +39,13 @@ People trust DesignCraft with their layouts; a crash loses their work. **This ou
 
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a milestone task lands.
+
+## Repository-specific deterministic quality contract (2026-10-26)
+
+**Project:** Rust page-layout/publishing application.
+
+**Engineering requirements:** Protect document pagination, print layout, font fallback and serialization compatibility.
+
+**Verification commands:** cargo fmt --all -- --check; cargo metadata --locked --no-deps --format-version 1; targeted cargo test.
+
+Only report checks as passed when run with actual evidence. Add regression tests for new behavior and boundary/error paths. Never delete/skip/weaken tests, hide failures or reduce thresholds to make CI pass. Require human review for changes to `QUALITY_GATES.md`, `AGENTS.md`, policy and workflows. Make `quality` a required branch status. Missing tooling or pre-existing failures must be disclosed. Preserve the original instructions.
