@@ -1,4 +1,11 @@
 <div align="center">
+  <a href="https://getnodalia.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/danielmigueltejedor/nodalia-web/main/assets/brand/nodalia-wordmark-white.svg">
+      <img src="https://raw.githubusercontent.com/danielmigueltejedor/nodalia-web/main/assets/brand/nodalia-wordmark-black.svg" width="150" alt="Nodalia">
+    </picture>
+  </a>
+  <br><br>
   <img src="https://raw.githubusercontent.com/danielmigueltejedor/pliego/main/assets/app-icon/hicolor/512x512/apps/ai.storyteller.designcraft.png" width="176" height="176" alt="Pliego">
   <h1>Pliego</h1>
   <p><strong>An editorial layout application for the Nodalia suite, built on the DesignCraft engine.</strong></p>
