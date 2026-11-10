@@ -11,6 +11,7 @@ const DOC_KEYS: &[&str] = &[
     "horizontalUnits",
     "verticalUnits",
     "keyboardIncrement",
+    "kerningIncrement",
     "baselineGrid",
     "grid",
     "pasteboard",
@@ -20,6 +21,8 @@ const DOC_KEYS: &[&str] = &[
     "slugColor",
     "advancedType",
     "overprintBlack",
+    "glyphFallback",
+    "rulerOrigin",
 ];
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -47,13 +50,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Preferences",
             [],
             None,
-            "{showHiddenCharacters?, typographersQuotes?, polygonSides?, starInset?, scaleStrokes?, dimensionsIncludeStroke?, transformationsAreTotals?, absolutePageNumbers?, highlightHj?, highlightKeeps?, highlightCustomTracking?, highlightSubstitutedFonts?, richBlackOutput?, favoriteFonts?: [family]} → all application preferences",
+            "{showHiddenCharacters?, typographersQuotes?, polygonSides?, starInset?, scaleStrokes?, dimensionsIncludeStroke?, transformationsAreTotals?, absolutePageNumbers?, highlightHj?, highlightKeeps?, highlightCustomTracking?, highlightSubstitutedFonts?, richBlackOutput?, favoriteFonts?: [family], recentFonts?: [family], showFontNamesInEnglish?, smartTextReflow?, autocorrect?, autocorrectList?: [[word, correction]], showAddedText?, showNoteAnchors?, cjkFeatures?: bool|null (CJK-only menu items and dialogs shown; null follows the interface language), linkTextFiles? (Create Links When Placing Text Files), recoveryMinutes?, recentFilesMax?: 0–100, defaultUnits?: {horizontalUnits?, verticalUnits?, rulerOrigin?, keyboardIncrement? (pt), kerningIncrement? (1/1000 em)} (Units & Increments of new documents)} → all application preferences",
             super::always,
             |s, p| {
                 let cur = serde_json::to_value(&s.prefs).map_err(|e| bad("prefs.set", e.to_string()))?;
                 let new = merge("prefs.set", cur, p, None)?;
-                s.prefs = serde_json::from_value(new.clone()).map_err(|e| bad("prefs.set", e.to_string()))?;
-                Ok(new)
+                let prefs: crate::Prefs = serde_json::from_value(new).map_err(|e| bad("prefs.set", e.to_string()))?;
+                prefs.default_units.check().map_err(|e| bad("prefs.set", e))?;
+                s.prefs = prefs;
+                s.prefs.trim_recent_files();
+                serde_json::to_value(&s.prefs).map_err(|e| bad("prefs.set", e.to_string()))
             }
         ),
         cmd!(
@@ -61,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Document Preferences",
             [],
             None,
-            "{horizontalUnits?, verticalUnits?: points|picas|inches|millimeters|…, keyboardIncrement? (pt), baselineGrid?: {start, increment, relativeTo, color, viewThreshold}, grid?: {horizontal, vertical, subdivisions, color, inBack}, pasteboard?: [h, v], marginColor?, columnColor?, bleedColor?, slugColor?: [r, g, b], advancedType?: {superscriptSize, superscriptPosition, subscriptSize, subscriptPosition} (%)} → those settings",
+            "{horizontalUnits?, verticalUnits?: points|picas|inches|millimeters|…, keyboardIncrement? (pt), kerningIncrement? (1/1000 em: Alt+Left/Right in text), baselineGrid?: {start, increment, relativeTo, color, viewThreshold}, grid?: {horizontal, vertical, subdivisions, color, inBack}, pasteboard?: [h, v], marginColor?, columnColor?, bleedColor?, slugColor?: [r, g, b], advancedType?: {superscriptSize, superscriptPosition, subscriptSize, subscriptPosition} (%), overprintBlack?, glyphFallback? (draw characters the font lacks from fallback fonts; off: as the font's missing-glyph box), rulerOrigin?: spread|page|spine (what rulers and X/Y measure from, with the zero point)} → those settings",
             has_doc,
             |s, p| {
                 let cur = serde_json::to_value(&s.doc()?.doc.settings).map_err(|e| bad("document.preferences", e.to_string()))?;
@@ -96,6 +102,9 @@ fn merge(cmd: &str, mut cur: Value, p: &Value, allowed: Option<&[&str]>) -> Resu
         match (c.get_mut(k), v) {
             (Some(Value::Object(old)), Value::Object(v)) => {
                 for (k2, v2) in v {
+                    if !old.is_empty() && !old.contains_key(k2) {
+                        return Err(bad(cmd, format!("unknown preference {k}.{k2}")));
+                    }
                     old.insert(k2.clone(), v2.clone());
                 }
             }
@@ -119,7 +128,11 @@ mod tests {
         let r = s.execute("prefs.set", &json!({"scaleStrokes": false})).unwrap();
         assert_eq!(r["scaleStrokes"], false);
         assert!(!s.prefs.scale_strokes);
+        assert_eq!(r["showFontNamesInEnglish"], false, "native CJK font names by default");
+        s.execute("prefs.set", &json!({"showFontNamesInEnglish": true})).unwrap();
+        assert!(s.prefs.show_font_names_in_english);
         assert!(s.execute("prefs.set", &json!({"nope": 1})).is_err());
+        assert!(s.execute("prefs.set", &json!({"defaultUnits": {"horizontalUnit": "inches"}})).is_err());
         s.execute("file.new", &json!({})).unwrap();
         let r = s
             .execute("document.preferences", &json!({"horizontalUnits": "millimeters", "keyboardIncrement": 2.5, "grid": {"subdivisions": 4}}))
@@ -133,6 +146,53 @@ mod tests {
         assert!(s.execute("document.preferences", &json!({"pageWidth": 100})).is_err(), "Document Setup's, not Preferences'");
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.doc().unwrap().doc.settings.horizontal_units, designcraft_geom::Unit::Picas);
+    }
+
+    /// Units & Increments set with no document open are what new documents start with, as in
+    /// InDesign: a reader who works in inches sets them once, not in every file.
+    #[test]
+    fn default_units_are_what_new_documents_start_with() {
+        use designcraft_geom::Unit;
+        let mut s = Session::new();
+        let r = s
+            .execute(
+                "prefs.set",
+                &json!({"defaultUnits": {"horizontalUnits": "inches", "verticalUnits": "inches", "keyboardIncrement": 0.5, "rulerOrigin": "page"}}),
+            )
+            .unwrap();
+        assert_eq!(r["defaultUnits"]["horizontalUnits"], "inches");
+        assert_eq!(r["defaultUnits"]["kerningIncrement"], 20.0, "the rest kept");
+        s.execute("file.new", &json!({})).unwrap();
+        let st = s.doc().unwrap().doc.settings.clone();
+        assert_eq!((st.horizontal_units, st.vertical_units), (Unit::Inches, Unit::Inches));
+        assert_eq!((st.keyboard_increment, st.ruler_origin), (0.5, designcraft_doc::RulerOrigin::Page));
+        assert!(!s.doc().unwrap().is_dirty(), "made so, not edited");
+        // Inches across, millimetres down: New Document's units (the horizontal ones) keep the
+        // vertical preference; other units picked there set both rulers.
+        s.execute("prefs.set", &json!({"defaultUnits": {"verticalUnits": "millimeters"}})).unwrap();
+        s.execute("file.new", &json!({"units": "inches"})).unwrap();
+        let st = s.doc().unwrap().doc.settings.clone();
+        assert_eq!((st.horizontal_units, st.vertical_units), (Unit::Inches, Unit::Millimeters));
+        s.execute("file.new", &json!({"units": "points"})).unwrap();
+        let st = s.doc().unwrap().doc.settings.clone();
+        assert_eq!((st.horizontal_units, st.vertical_units), (Unit::Points, Unit::Points));
+        // A preset keeps its own units, both of them, even when the default horizontal units are
+        // the preset's.
+        s.execute("prefs.set", &json!({"defaultUnits": {"horizontalUnits": "millimeters", "verticalUnits": "inches"}})).unwrap();
+        s.execute("file.new", &json!({"preset": "A4"})).unwrap();
+        let st = s.doc().unwrap().doc.settings.clone();
+        assert_eq!((st.horizontal_units, st.vertical_units), (Unit::Millimeters, Unit::Millimeters));
+        assert_eq!(st.keyboard_increment, 0.5, "the increments still apply");
+        s.execute("prefs.set", &json!({"defaultUnits": {"horizontalUnits": "inches", "verticalUnits": "millimeters"}})).unwrap();
+        // New Document opens with them; bad values are refused and change nothing.
+        assert_eq!(s.default_new_document().units, Unit::Inches);
+        for bad in [json!({"horizontalUnits": "furlongs"}), json!({"keyboardIncrement": 0}), json!({"kerningIncrement": -5})] {
+            assert!(s.execute("prefs.set", &json!({"defaultUnits": bad})).is_err(), "{bad}");
+        }
+        assert_eq!(s.prefs.default_units.keyboard_increment, 0.5);
+        // Kept with the application preferences.
+        let saved: crate::Prefs = serde_json::from_slice(&serde_json::to_vec(&s.prefs).unwrap()).unwrap();
+        assert_eq!(saved.default_units, s.prefs.default_units);
     }
 }
 
@@ -262,5 +322,39 @@ mod blend_space_tests {
         let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
         assert_eq!(back.settings.blend_space, designcraft_doc::BlendSpace::Rgb);
         assert!(s.execute("edit.transparencyBlendSpace", &json!({"space": "lab"})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod glyph_fallback_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn glyph_fallback_is_an_undoable_document_preference() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.execute("document.preferences", &json!({})).unwrap()["glyphFallback"], false, "new documents: off");
+        let r = s.execute("frame.create", &json!({"rect": [72, 72, 400, 300], "content": "text", "text": "語"})).unwrap();
+        let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+        let gid = |s: &Session| s.cache.get(&s.doc().unwrap().doc, sid, None).frames[0].lines[0].glyphs[0].gid;
+        assert_eq!(gid(&s), 0);
+        designcraft_fonts::FontDb::global().add_font(designcraft_fonts::testing::font_with("DC Test Prefs Helper", &['語']).unwrap());
+        assert_eq!(s.execute("document.preferences", &json!({"glyphFallback": true})).unwrap()["glyphFallback"], true);
+        assert!(s.doc().unwrap().doc.settings.glyph_fallback);
+        assert_ne!(gid(&s), 0, "drawn from a fallback font");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(!s.doc().unwrap().doc.settings.glyph_fallback);
+        assert_eq!(gid(&s), 0);
+    }
+
+    #[test]
+    fn idml_imports_draw_missing_glyphs_as_boxes() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("document.preferences", &json!({"glyphFallback": true})).unwrap();
+        let back = designcraft_idml::import_idml(&designcraft_idml::export_idml(&s.doc().unwrap().doc)).unwrap();
+        assert!(!back.settings.glyph_fallback, "as InDesign draws them");
     }
 }
