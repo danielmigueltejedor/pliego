@@ -3,11 +3,11 @@
 | Field | Value |
 |---|---|
 | Upstream | `storytold/designcraft` |
-| Last observed | `d582277cc79c4bc9cee174b25b13fb11e6957aa5` |
-| Last evaluated | `d582277cc79c4bc9cee174b25b13fb11e6957aa5` |
-| Last integrated | `d582277cc79c4bc9cee174b25b13fb11e6957aa5` imported as the engine baseline |
+| Last observed | `95abb2b03b6d510a72d687b2e5ee41ef3cbd7485` |
+| Last evaluated | `95abb2b03b6d510a72d687b2e5ee41ef3cbd7485` |
+| Last integrated | `95abb2b03b6d510a72d687b2e5ee41ef3cbd7485` merged on 2026-11-10 |
 | Skipped | none in the baseline import |
 | Adapted | desktop binary name `pliego` |
-| Conflicting | none recorded |
+| Conflicting | `README.md` (kept ours), `AGENTS.md` (upstream plus our quality contract) |
 
 Crate names stay as imported so the workspace builds. Public product name is Pliego.

@@ -7,11 +7,25 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod features;
 mod fontdb;
+mod group;
+mod kind;
+#[cfg(target_os = "macos")]
+mod mac_fonts;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+mod vertical;
 
-pub use fontdb::{FALLBACK_FAMILY, FaceRef, FontDb, FontFace, base_style, bundled, system_font_dirs};
+pub use features::{FontFeatures, font_features};
+pub use fontdb::{
+    DOCUMENT_FONTS_FOLDER, DocumentFonts, FALLBACK_FAMILY, FaceRef, FontDb, FontFace, FontSource, MAX_DOCUMENT_FONT_BYTES, MAX_DOCUMENT_FONT_FILES,
+    MAX_DOCUMENT_FONTS_TOTAL, ReloadedFonts, ScopedFonts, base_style, bundled, same_style, sans_by_name, system_font_dirs,
+};
+pub use group::{FamilyInfo, FontGroup, sort_for_menu};
 pub use harfrust::Feature;
-use harfrust::{Direction, ShapeOptions, Tag, UnicodeBuffer};
+use harfrust::{Direction, Language, ShapeOptions, Tag, UnicodeBuffer};
+pub use kind::{FaceKind, FontClass, FontFormat, classify, panose_distance};
 pub use kurbo::BezPath;
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
@@ -52,15 +66,34 @@ pub fn japanese_ui_fonts(bold: bool) -> Vec<&'static CraftFont> {
 /// InDesign's default text font is a serif; ours is Source Serif 4.
 pub const DEFAULT_FAMILY: &str = "Source Serif 4";
 
-/// One shaped glyph, in font units.
+/// One shaped glyph, in font units (y up).
+///
+/// Horizontal runs ([`shape`]) advance by `x_advance` (`y_advance` is 0) and the offsets move the
+/// glyph from its pen position. Vertical runs ([`shape_vertical`]) advance down the line by
+/// `-y_advance` (`x_advance` is 0) and the offsets move the glyph from its vertical origin
+/// ([`FontFace::v_origin`]) on the line's centre, as `vpal` or `vkrn` place it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShapedGlyph {
     pub gid: u32,
     /// Byte offset (in the shaped string) of the cluster this glyph belongs to.
     pub cluster: usize,
     pub x_advance: i32,
+    pub y_advance: i32,
     pub x_offset: i32,
     pub y_offset: i32,
+    pub safe_tatweel_before: bool,
+    /// Direction used for shaping, including Unicode mirroring.
+    pub rtl: bool,
+}
+
+/// Line metrics of the font at `index` of `data`, in font units: (units per em, ascent, descent
+/// (negative below the baseline), line gap) — what text layouts such as egui's build lines from.
+/// `None` if the font can't be read.
+pub fn line_metrics(data: &[u8], index: u32) -> Option<(f32, f32, f32, f32)> {
+    use skrifa::MetadataProvider;
+    let f = skrifa::FontRef::from_index(data, index).ok()?;
+    let m = f.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
+    Some((f32::from(m.units_per_em.max(1)), m.ascent, m.descent, m.leading))
 }
 
 /// An OpenType feature setting: `"liga"`, `"-kern"`, `"ss01"`.
@@ -82,31 +115,42 @@ pub fn is_rtl(c: char) -> bool {
     matches!(unicode_bidi::bidi_class(c), R | AL)
 }
 
-/// Maximal runs of one direction (neutrals join the run they're in): (byte range, right-to-left).
-fn direction_runs(text: &str) -> Vec<(std::ops::Range<usize>, bool)> {
-    let mut runs: Vec<(std::ops::Range<usize>, bool)> = Vec::new();
-    let mut cur: Option<bool> = None;
+/// Resolve directional and script runs before choosing the OpenType shaper.
+fn direction_runs(text: &str) -> Vec<(std::ops::Range<usize>, bool, unicode_script::Script)> {
+    use unicode_script::{Script, UnicodeScript};
+    let info = unicode_bidi::BidiInfo::new(text, None);
+    let mut runs = Vec::new();
+    let mut script =
+        text.chars().map(|c| c.script()).find(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown)).unwrap_or(Script::Common);
     let mut start = 0;
+    let mut rtl = info.levels.first().is_some_and(|l| l.is_rtl());
     for (i, c) in text.char_indices() {
-        let strong = if is_rtl(c) {
-            Some(true)
-        } else if unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::L {
-            Some(false)
-        } else {
-            None
+        let next_rtl = info.levels.get(i).is_some_and(|l| l.is_rtl());
+        let next_script = match c.script() {
+            Script::Common | Script::Inherited | Script::Unknown => script,
+            s => s,
         };
-        match (cur, strong) {
-            (None, Some(d)) => cur = Some(d),
-            (Some(a), Some(d)) if a != d => {
-                runs.push((start..i, a));
-                start = i;
-                cur = Some(d);
-            }
-            _ => {}
+        if i > start && (next_rtl != rtl || next_script != script) {
+            runs.push((start..i, rtl, script));
+            start = i;
         }
+        rtl = next_rtl;
+        script = next_script;
     }
-    runs.push((start..text.len(), cur.unwrap_or(false)));
+    if start < text.len() {
+        runs.push((start..text.len(), rtl, script));
+    }
     runs
+}
+
+/// What surrounds a run being shaped: the text before and after it (so Arabic letters join across a
+/// change of style) and its language, a BCP 47 tag such as `tr` or `zh-Hant` that picks the font's
+/// localized forms (OpenType `locl`; `None` or a tag the shaper can't read: the font's defaults).
+#[derive(Clone, Copy, Default)]
+pub struct ShapeContext<'a> {
+    pub before: &'a str,
+    pub after: &'a str,
+    pub language: Option<&'a str>,
 }
 
 /// Shape `text` with `face`. `chars` lets callers substitute characters (e.g. uppercase for All
@@ -114,12 +158,25 @@ fn direction_runs(text: &str) -> Vec<(std::ops::Range<usize>, bool)> {
 /// order: right-to-left runs are shaped right to left, then their clusters put back in text
 /// order (each cluster's glyphs keep the shaper's order); line layout reorders them visually.
 pub fn shape(face: &FontFace, text: &str, features: &[Feature], map: impl Fn(char) -> char) -> Vec<ShapedGlyph> {
-    if !text.chars().any(is_rtl) {
-        return shape_dir(face, text, features, &map, false);
-    }
+    shape_with_context(face, text, features, map, ShapeContext::default())
+}
+
+/// [`shape`] `text` in its `context`: its language and the text around it.
+pub fn shape_with_context(
+    face: &FontFace,
+    text: &str,
+    features: &[Feature],
+    map: impl Fn(char) -> char,
+    context: ShapeContext<'_>,
+) -> Vec<ShapedGlyph> {
     let mut out = Vec::with_capacity(text.len());
-    for (r, rtl) in direction_runs(text) {
-        let mut g = shape_dir(face, &text[r.clone()], features, &map, rtl);
+    for (r, rtl, script) in direction_runs(text) {
+        let local = ShapeContext {
+            before: if r.start == 0 { context.before } else { &text[..r.start] },
+            after: if r.end == text.len() { context.after } else { &text[r.end..] },
+            language: context.language,
+        };
+        let mut g = shape_dir(face, &text[r.clone()], features, &map, rtl, script, local);
         for x in &mut g {
             x.cluster += r.start;
         }
@@ -140,14 +197,47 @@ pub fn shape(face: &FontFace, text: &str, features: &[Feature], map: impl Fn(cha
     out
 }
 
-fn shape_dir(face: &FontFace, text: &str, features: &[Feature], map: &impl Fn(char) -> char, rtl: bool) -> Vec<ShapedGlyph> {
+/// `features` as a run in `script` takes them. Contextual alternates are part of how Arabic joins
+/// (connecting strokes, tatweel and letter variants): InDesign keeps them in Arabic text with
+/// Contextual Alternates off, so `calt` off is dropped there.
+fn script_features(features: &[Feature], script: unicode_script::Script) -> std::borrow::Cow<'_, [Feature]> {
+    use unicode_script::Script;
+    let calt = Tag::new(b"calt");
+    let off = |f: &Feature| f.tag == calt && f.value == 0;
+    if script == Script::Arabic && features.iter().any(off) {
+        features.iter().filter(|f| !off(f)).copied().collect::<Vec<_>>().into()
+    } else {
+        features.into()
+    }
+}
+
+fn shape_dir(
+    face: &FontFace,
+    text: &str,
+    features: &[Feature],
+    map: &impl Fn(char) -> char,
+    rtl: bool,
+    script: unicode_script::Script,
+    context: ShapeContext<'_>,
+) -> Vec<ShapedGlyph> {
     let mut out = Vec::with_capacity(text.len());
+    let features = script_features(features, script);
+    let features = &features[..];
     let shaped = face.hb().map(|hb| {
         let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
         let mut buf = UnicodeBuffer::new();
         for (i, c) in text.char_indices() {
             buf.add(map(c), i as u32);
         }
+        buf.set_pre_context(context.before);
+        buf.set_post_context(context.after);
+        if let Ok(script) = script.short_name().parse() {
+            buf.set_script(script);
+        }
+        if let Some(language) = context.language.and_then(|t| t.parse::<Language>().ok()) {
+            buf.set_language(language);
+        }
+        buf.set_flags(harfrust::BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL);
         buf.guess_segment_properties();
         buf.set_direction(if rtl { Direction::RightToLeft } else { Direction::LeftToRight });
         let gb = shaper.shape(buf, ShapeOptions::new().features(features));
@@ -156,8 +246,11 @@ fn shape_dir(face: &FontFace, text: &str, features: &[Feature], map: &impl Fn(ch
                 gid: info.glyph_id,
                 cluster: info.cluster as usize,
                 x_advance: pos.x_advance,
+                y_advance: 0,
                 x_offset: pos.x_offset,
                 y_offset: pos.y_offset,
+                safe_tatweel_before: info.safe_to_insert_tatweel(),
+                rtl,
             });
         }
     });
@@ -169,8 +262,81 @@ fn shape_dir(face: &FontFace, text: &str, features: &[Feature], map: &impl Fn(ch
         for (i, c) in text.char_indices() {
             let g = cmap.map(map(c)).unwrap_or_default();
             let adv = gm.advance_width(g).unwrap_or(face.upem as f32 * 0.5);
-            out.push(ShapedGlyph { gid: g.to_u32(), cluster: i, x_advance: adv.round() as i32, x_offset: 0, y_offset: 0 });
+            out.push(ShapedGlyph {
+                gid: g.to_u32(),
+                cluster: i,
+                x_advance: adv.round() as i32,
+                y_advance: 0,
+                x_offset: 0,
+                y_offset: 0,
+                safe_tatweel_before: false,
+                rtl: false,
+            });
         }
+    }
+    out
+}
+
+/// Shape upright text top to bottom (`text`, `features`, `map` and `context` as in
+/// [`shape_with_context`]): the shaper applies `vert` (vertical forms), and `vkrn` and `vpal` when
+/// `features` turn them on. Advances and origins are the face's vertical metrics
+/// ([`FontFace::v_advance`], [`FontFace::v_origin`]).
+pub fn shape_vertical(face: &FontFace, text: &str, features: &[Feature], map: impl Fn(char) -> char, context: ShapeContext<'_>) -> Vec<ShapedGlyph> {
+    let mut funcs = vertical::VerticalFuncs { face, metrics: vertical::VMetrics::new(face) };
+    let mut out = Vec::with_capacity(text.len());
+    let mut origins = Vec::with_capacity(text.len());
+    let shaped = face.hb().map(|hb| {
+        let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
+        let mut buf = UnicodeBuffer::new();
+        for (i, c) in text.char_indices() {
+            buf.add(map(c), i as u32);
+        }
+        buf.set_pre_context(context.before);
+        buf.set_post_context(context.after);
+        if let Some(language) = context.language.and_then(|t| t.parse::<Language>().ok()) {
+            buf.set_language(language);
+        }
+        buf.guess_segment_properties();
+        buf.set_direction(Direction::TopToBottom);
+        let gb = shaper.shape(buf, ShapeOptions::new().features(features).font_funcs(Some(&mut funcs)));
+        for (info, pos) in gb.glyph_infos().iter().zip(gb.glyph_positions()) {
+            out.push(ShapedGlyph {
+                gid: info.glyph_id,
+                cluster: info.cluster as usize,
+                x_advance: pos.x_advance,
+                y_advance: pos.y_advance,
+                x_offset: pos.x_offset,
+                y_offset: pos.y_offset,
+                safe_tatweel_before: false,
+                rtl: false,
+            });
+        }
+    });
+    if shaped.is_none()
+        && let Some(f) = face.skrifa()
+    {
+        let cmap = f.charmap();
+        for (i, c) in text.char_indices() {
+            let gid = cmap.map(map(c)).unwrap_or_default().to_u32();
+            let (x, y) = funcs.origin(gid);
+            let adv = -(face.v_advance(gid).round() as i32);
+            out.push(ShapedGlyph {
+                gid,
+                cluster: i,
+                x_advance: 0,
+                y_advance: adv,
+                x_offset: -x,
+                y_offset: -y,
+                safe_tatweel_before: false,
+                rtl: false,
+            });
+        }
+    }
+    // The shaper hangs each glyph from its vertical origin; keep only what GPOS moved it by.
+    origins.extend(out.iter().map(|g| funcs.origin(g.gid)));
+    for (g, (x, y)) in out.iter_mut().zip(origins) {
+        g.x_offset = g.x_offset.saturating_add(x);
+        g.y_offset = g.y_offset.saturating_add(y);
     }
     out
 }
@@ -183,6 +349,26 @@ pub fn first_glyph(face: &FontFace, chars: &[char]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arabic_keeps_contextual_alternates() {
+        use unicode_script::Script;
+        let off = feature("-calt").unwrap();
+        let liga = feature("-liga").unwrap();
+        let tags = |s: Script| script_features(&[off, liga], s).iter().map(|f| (f.tag, f.value)).collect::<Vec<_>>();
+        assert_eq!(tags(Script::Arabic), vec![(liga.tag, 0)]);
+        assert_eq!(tags(Script::Latin), vec![(off.tag, 0), (liga.tag, 0)]);
+    }
+
+    #[test]
+    fn arabic_script_runs_do_not_inherit_the_hebrew_shaper() {
+        use unicode_script::Script;
+        let text = "אב بب";
+        let runs = direction_runs(text);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], (0..5, true, Script::Hebrew));
+        assert_eq!(runs[1], (5..text.len(), true, Script::Arabic));
+    }
 
     #[test]
     fn last_resort_face_parses() {
@@ -204,6 +390,22 @@ mod tests {
     }
 
     #[test]
+    fn style_linking_finds_bold_and_italic_in_the_family() {
+        let db = FontDb::with_font_dirs(vec![]);
+        let link = |cur: &str, bold: Option<bool>, italic: Option<bool>| db.linked_style("Source Serif 4", cur, bold, italic);
+        assert_eq!(link("Regular", Some(true), None).as_deref(), Some("Bold"));
+        assert_eq!(link("Italic", Some(true), None).as_deref(), Some("Bold Italic"), "keeps the italic");
+        assert_eq!(link("Bold", None, Some(true)).as_deref(), Some("Bold Italic"), "keeps the weight");
+        assert_eq!(link("Bold Italic", Some(false), None).as_deref(), Some("Italic"));
+        assert_eq!(link("Bold Italic", None, Some(false)).as_deref(), Some("Bold"));
+        assert_eq!(link("Semibold", Some(false), None).as_deref(), Some("Regular"));
+        assert_eq!(db.traits_of("Source Serif 4", "Bold Italic"), (700.0, true));
+        // Source Sans 3 is bundled without a bold italic.
+        assert_eq!(db.linked_style("Source Sans 3", "Italic", Some(true), None), None);
+        assert_eq!(db.linked_style("No Such Family", "Regular", Some(true), None), None);
+    }
+
+    #[test]
     fn shaping_produces_clusters_and_advances() {
         let face = FontDb::global().face(DEFAULT_FAMILY, "Regular");
         let g = shape(&face, "Hello", &[], |c| c);
@@ -219,6 +421,17 @@ mod tests {
         let off = shape(&face, "office", &[feature("-liga").unwrap()], |c| c);
         assert!(on.len() <= off.len());
         assert_eq!(off.len(), 6);
+    }
+
+    #[test]
+    fn language_picks_localized_forms() {
+        // Source Serif 4's `locl` has a Turkish `i`.
+        let face = FontDb::global().face(DEFAULT_FAMILY, "Regular");
+        let gid = |language| shape_with_context(&face, "i", &[], |c| c, ShapeContext { language, ..Default::default() })[0].gid;
+        assert_eq!(gid(None), face.glyph_for('i'));
+        assert_eq!(gid(Some("en-US")), face.glyph_for('i'));
+        assert_ne!(gid(Some("tr")), face.glyph_for('i'));
+        assert_eq!(gid(Some("not a tag")), face.glyph_for('i'));
     }
 
     #[test]
@@ -266,8 +479,53 @@ mod tests {
         let custom = db.face(&fam, &format!("{} {{wght:{mid}}}", light.style));
         assert!(custom.is_variable() && custom.coords.iter().any(|(t, v)| t == b"wght" && *v == mid));
         assert!(!db.styles(&fam).iter().any(|s| s.contains('{')), "instances aren't listed");
+        // Settings for axes the font hasn't got are dropped, however many a style string names.
+        let bogus: Vec<String> = (0..20_000).map(|i| format!("q{:03}:1", i % 1000)).collect();
+        let t = std::time::Instant::now();
+        let odd = db.face(&fam, &format!("{} {{wght:{mid},{}}}", light.style, bogus.join(",")));
+        assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+        assert_eq!(odd.coords.len(), custom.coords.len(), "only the font's own axes are kept");
         let static_face = db.face(DEFAULT_FAMILY, "Regular {wght:700}");
         assert_eq!(static_face.style, "Regular", "static fonts ignore axis settings");
+    }
+
+    #[test]
+    fn an_exact_family_name_wins_over_the_name_without_its_format_suffix() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        db.add_font(testing::font_with("DC Test Suffix (OTF)", &['a']).unwrap());
+        assert_eq!(db.face("DC Test Suffix (OTF)", "Regular").family, "DC Test Suffix (OTF)");
+        assert_eq!(db.face(&format!("{DEFAULT_FAMILY} (TT)"), "Regular").family, DEFAULT_FAMILY);
+        assert!(db.has_family(&format!("{DEFAULT_FAMILY} (T1)")));
+        assert!(!db.has_family(&format!("{DEFAULT_FAMILY} (Bold)")));
+        assert!(!db.has_family("DC Test Suffix"));
+    }
+
+    /// IDML files from InDesign can name a family with its `$ID/` prefix (`$ID/Arial`).
+    #[test]
+    fn an_indesign_id_prefix_names_the_plain_family() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let prefixed = format!("$ID/{DEFAULT_FAMILY}");
+        assert_eq!(db.face(&prefixed, "Bold").family, DEFAULT_FAMILY);
+        assert!(db.has_family(&prefixed));
+        assert_eq!(db.styles(&prefixed), db.styles(DEFAULT_FAMILY));
+        assert!(db.has_family(&format!("$ID/{DEFAULT_FAMILY} (OTF)")));
+        assert!(!db.has_family("$ID/"));
+        assert!(!db.has_family("$ID/DC No Such Family"));
+    }
+
+    #[test]
+    fn a_family_name_keeps_its_spaces_and_falls_back_to_the_trimmed_name() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        db.add_font(testing::font_with("DC Test Space ", &['a']).unwrap());
+        db.add_font(testing::font_with("DC Test Space", &['a']).unwrap());
+        assert_eq!(db.face("DC Test Space ", "Regular").family, "DC Test Space ");
+        assert_eq!(db.face("DC Test Space", "Regular").family, "DC Test Space");
+        assert_eq!(db.face(&format!(" {DEFAULT_FAMILY}\n"), "Regular").family, DEFAULT_FAMILY);
+        assert!(db.has_family(&format!("{DEFAULT_FAMILY} ")));
+        assert_eq!(db.styles(&format!("{DEFAULT_FAMILY} ")), db.styles(DEFAULT_FAMILY));
     }
 
     #[test]
@@ -279,6 +537,49 @@ mod tests {
         assert!(!o.elements().is_empty());
         assert!(face.ascent > 0.0 && face.descent > 0.0 && face.cap_height > face.x_height);
         assert!(feature("abc").is_none());
+    }
+
+    #[test]
+    fn a_notdef_without_an_outline_is_drawn_as_a_box() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let font = testing::font_with("DC Test Empty Notdef", &['a']).unwrap();
+        db.add_font(testing::with_empty_notdef(font).unwrap());
+        let face = db.face("DC Test Empty Notdef", "Regular");
+        assert!(face.skrifa().unwrap().outline_glyphs().get(skrifa::GlyphId::NOTDEF).is_some_and(|g| {
+            let mut pen = kurbo::BezPath::new();
+            let _ = g.draw(skrifa::outline::DrawSettings::unhinted(skrifa::instance::Size::unscaled(), face.location()), &mut BezPen(&mut pen));
+            pen.elements().is_empty()
+        }));
+        // The box spans the glyph's advance, above the baseline (outlines are y-down).
+        let b = kurbo::Shape::bounding_box(&*db.outline(&face, 0));
+        assert!(b.width() > 0.0 && b.width() <= face.advance(0), "{b:?}");
+        assert!(b.y0 < 0.0 && b.y1 <= 0.0, "{b:?}");
+        assert!(db.missing_box(&face).is_some());
+        // A font's own .notdef stays as drawn.
+        let serif = db.face(DEFAULT_FAMILY, "Regular");
+        assert!(db.missing_box(&serif).is_none());
+        assert!(!db.outline(&serif, 0).elements().is_empty());
+    }
+
+    struct BezPen<'a>(&'a mut kurbo::BezPath);
+
+    impl skrifa::outline::OutlinePen for BezPen<'_> {
+        fn move_to(&mut self, x: f32, y: f32) {
+            self.0.move_to((x as f64, y as f64));
+        }
+        fn line_to(&mut self, x: f32, y: f32) {
+            self.0.line_to((x as f64, y as f64));
+        }
+        fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+            self.0.quad_to((cx0 as f64, cy0 as f64), (x as f64, y as f64));
+        }
+        fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+            self.0.curve_to((cx0 as f64, cy0 as f64), (cx1 as f64, cy1 as f64), (x as f64, y as f64));
+        }
+        fn close(&mut self) {
+            self.0.close_path();
+        }
     }
 
     #[test]
@@ -307,10 +608,13 @@ mod tests {
             assert_eq!(horizontal.len(), vertical.len());
             assert!(horizontal.iter().zip(&vertical).any(|(h, v)| h.gid != v.gid), "{} has vertical forms", cf.family);
         }
-        // Japanese in a Latin face falls back to a craft-fonts Mincho, without system fonts.
+        // Japanese in a Latin face falls back to a craft-fonts Mincho, without system fonts, in
+        // Japanese text (the Japanese chain) and without a language (the first loaded face).
         let latin = db.face(DEFAULT_FAMILY, "Regular");
-        let fb = db.fallback_for('語', latin.id()).unwrap();
-        assert!(fb.family.contains("Mincho"), "{fb:?}");
+        for language in [Some("ja"), None] {
+            let fb = db.fallback_for('語', latin.id(), language).unwrap();
+            assert!(fb.family.contains("Mincho"), "{language:?}: {fb:?}");
+        }
     }
 
     #[test]
@@ -323,7 +627,87 @@ mod tests {
         if CRAFT_FONTS.is_empty() {
             assert!(japanese_fonts().next().is_none() && japanese_document_fonts().is_empty());
             let latin = db.face(DEFAULT_FAMILY, "Regular");
-            assert!(db.fallback_for('語', latin.id()).is_none(), "no bundled Japanese font");
+            for language in [Some("ja"), None] {
+                assert!(db.fallback_for('語', latin.id(), language).is_none(), "no bundled Japanese font: {language:?}");
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+
+    #[test]
+    fn localized_family_and_style_names_resolve_without_false_missing_status() {
+        let bytes = testing::font_with("Alias Face", &['A']).unwrap();
+        let bytes = testing::with_names(
+            &bytes,
+            &[(3, 1, 0x409, 1, "Alias Face"), (3, 1, 0x804, 1, "别名字体"), (3, 1, 0x409, 2, "Regular"), (3, 1, 0x804, 2, "常规")],
+        )
+        .unwrap();
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.add_font(bytes);
+        let scope = db.scoped(0);
+        assert!(scope.has_family("别名字体"));
+        assert_eq!(scope.face("别名字体", "常规").family, "Alias Face");
+        assert!(scope.has_style("别名字体", "常规"));
+        assert!(!scope.has_style("别名字体", "Unreal Style"));
+        assert_eq!(scope.styles("别名字体"), ["Regular"]);
+    }
+
+    #[test]
+    fn a_style_name_beats_another_face_s_legacy_subfamily() {
+        // Static families often name each weight's legacy (RIBBI) family "Legacy Sans Black" with
+        // subfamily "Regular": that alias must not shadow the face actually styled Regular.
+        let face =
+            |records: &[(u16, u16, u16, u16, &str)]| testing::with_names(&testing::font_with("Legacy Sans", &['A']).unwrap(), records).unwrap();
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.add_font(face(&[
+            (3, 1, 0x409, 1, "Legacy Sans Black"),
+            (3, 1, 0x409, 2, "Regular"),
+            (3, 1, 0x409, 16, "Legacy Sans"),
+            (3, 1, 0x409, 17, "Black"),
+        ]));
+        db.add_font(face(&[(3, 1, 0x409, 1, "Legacy Sans"), (3, 1, 0x409, 2, "Regular")]));
+        let scope = db.scoped(0);
+        assert_eq!(scope.face("Legacy Sans", "Regular").style, "Regular");
+        assert_eq!(scope.face("Legacy Sans", "Black").style, "Black");
+    }
+
+    #[test]
+    fn known_substitution_preserves_missing_original_status() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.add_font(testing::font_with("Carlito", &['A']).unwrap());
+        let scope = db.scoped(0);
+        assert_eq!(scope.substitute_family("Calibri"), "Carlito");
+        assert!(scope.canonical_family("An Unavailable Original Family").is_none());
+        assert_eq!(scope.face("An Unavailable Original Family", "Regular").family, FALLBACK_FAMILY);
+    }
+}
+
+#[cfg(test)]
+mod coverage_recommendation_tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_fonts_do_not_satisfy_glyph_coverage() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.add_font(testing::font_with(".LastResort", &['\u{10fffd}']).unwrap());
+        let face = db.face(".LastResort", "Regular");
+        assert!(face.is_placeholder());
+        assert!(!face.covers('\u{10fffd}'));
+        assert!(db.fallback_for('\u{10fffd}', u32::MAX, None).is_none());
+    }
+
+    #[test]
+    fn arabic_replacement_also_covers_surrounding_punctuation() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.add_font(testing::font_with("Geeza Pro", &['ع']).unwrap());
+        db.add_font(testing::font_with("Al Bayan", &['ع', '“']).unwrap());
+        let scope = db.scoped(0);
+        assert_eq!(scope.face("Traditional Arabic", "Regular").family, "Geeza Pro");
+        assert_eq!(scope.replacement_face("Traditional Arabic", "Regular", &['ع', '“']).family, "Al Bayan");
+        assert!(!scope.has_family("Traditional Arabic"));
     }
 }
