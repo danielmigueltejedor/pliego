@@ -1,38 +1,23 @@
-# DesignCraft app icon
+# Pliego app icon
 
-**A calico cat wearing a polka-dot scarf**, as an engraving-style head-and-shoulders portrait in the
-Crafting Apps' owl-template framing: a full-bleed colour field, the cat in three-quarter view, its
-shoulders running off the bottom edge.
+**Figure:** Johannes Gutenberg. He introduced movable-type printing, the origin of page layout.
 
-## Palette
+**Style:** a black-and-white portrait cut out over a full-bleed colour field, head and shoulders, in
+the Nodalia icon family (one historical figure per app, one colour per app).
 
-Exactly three colours:
+**Tile:** 512 × 512 viewBox, rounded square `rx=112`, clipped; no border or roundel.
 
-| Colour | Hex | Used for |
-|---|---|---|
-| Ink | `#0b0b0c` | Line work and contour |
-| Paper | `#efe9dc` | The figure (the cat and its scarf) |
-| DesignCraft green (app colour) | `#7bb51c` | The full-bleed background field |
-
-## Geometry
-
-A 512 × 512 viewBox, clipped to a rounded square with `rx=112`. Windows and Linux use the full tile. The
-macOS icons (`.icns`, `designcraft-macos-512.png`) sit on Apple's grid: an 824/1024 body with a
-transparent margin.
-
-## Provenance
-
-The owner drew the cat in ArtCraft. The 2880 px drawing, keyed to the three-colour palette, lives
-outside this repo in craftrules at `assets/app-icons/designcraft/source.png`. It was vectorised with
-craftrules' `assets/logo-options/_tools/vectorize_tile.py`: `designcraft.svg` is traced at 2048 px and
-`designcraft-small.svg` at 1024 px. Design rules: craftrules `standards/icon-design.md`.
+**Provenance:** the portrait is "Portret van Johannes Gutenberg, RP-P-1914-4009.jpg" from
+[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Portret_van_Johannes_Gutenberg,_RP-P-1914-4009.jpg) (CC0). The figure was separated from its
+background, converted to black and white and placed over the app colour.
+Licence: see [LICENSE.txt](LICENSE.txt).
 
 ## Files
 
 | File | Use |
 |---|---|
-| `designcraft.svg` | Canonical artwork (about 680 KB) |
-| `designcraft-small.svg` | Lighter vector (about 350 KB); also `hicolor/scalable` |
+| `designcraft.svg` | master: the portrait as a 1024 px image embedded in an SVG with the tile clip (canonical) |
+| `designcraft-small.svg` | lighter 512 px version; also the scalable Linux icon and the web favicon where there is one |
 | `designcraft-1024.png` | 1024 px render of the full tile |
 | `designcraft-macos-512.png` | Runtime Dock icon on macOS (embedded by `apps/designcraft`) |
 | `designcraft.icns` | macOS bundle icon (`CFBundleIconFile`) |
@@ -46,5 +31,7 @@ The app ID is `ai.storyteller.designcraft`. It's used for the hicolor icon names
 
 ## Regenerate
 
-Edit `designcraft.svg` (or `designcraft-small.svg`), then run `packaging/icons.sh`. It needs `resvg`, and
-`iconutil` for the `.icns` (macOS only). It packs the `.ico` with `cargo xtask ico`.
+The icon is a raster portrait, so the SVG files embed an image instead of traced paths. The
+derived files in this directory were rendered directly from the portrait. `packaging/icons.sh`
+still works on `designcraft.svg` (resvg renders embedded images), but its output will differ slightly
+from the committed files in resampling.
