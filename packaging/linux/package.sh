@@ -82,6 +82,10 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$DESIGNCRAFT_BUILD_DATE/g" \
   "$HERE/$APP_ID.metainfo.xml.in" >"$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
 mkdir -p "$STAGE/usr/share/icons"
 cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/usr/share/icons/"
+
+# The .desktop names the icon dev.danielmiguelt.Pliego, the Nodalia name, so an icon theme can
+# tell this app from the Craft app that shares its ID.
+for f in "$STAGE"/usr/share/icons/hicolor/*/apps/"$APP_ID".{png,svg}; do cp "$f" "${f%/*}/dev.danielmiguelt.Pliego.${f##*.}"; done
 mkdir -p "$STAGE/usr/share/doc/designcraft"
 copy_docs "$STAGE/usr/share/doc/designcraft"
 
@@ -128,6 +132,7 @@ if has appimage; then
   ln -s usr/bin/designcraft "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
+  cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/dev.danielmiguelt.Pliego.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
 
   TOOL="${APPIMAGETOOL:-$(command -v appimagetool || true)}"
