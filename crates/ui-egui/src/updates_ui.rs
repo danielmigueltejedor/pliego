@@ -1,15 +1,14 @@
-//! Software updates, background check at startup, and startup prompt modal.
+//! Software updates: Help ▸ Check for Updates, the check at start, and their windows.
+//!
+//! The flow and the windows are `nodalia-update`'s, shared with the other Nodalia apps; this file
+//! is what is this app's own: when an update may close it, and where its keys go.
 
 use serde_json::Value;
 
 use crate::DesignApp;
 
 #[cfg(not(target_arch = "wasm32"))]
-use craft_update::updater::Status;
-#[cfg(not(target_arch = "wasm32"))]
-use craft_update::updater::{Action, Updater};
-#[cfg(not(target_arch = "wasm32"))]
-use craft_update::{CheckResultDialog, CheckResultResponse};
+use nodalia_update::egui::{Action, Updater};
 
 pub(crate) struct Runtime {
     #[cfg(not(target_arch = "wasm32"))]
@@ -31,7 +30,7 @@ impl Default for Runtime {
     fn default() -> Self {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
-            updater: Updater::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION")),
+            updater: Updater::new(crate::UPDATE_APP).with_accent([0x7b, 0xb5, 0x1c]),
             #[cfg(not(target_arch = "wasm32"))]
             startup_check: false,
             #[cfg(not(target_arch = "wasm32"))]
@@ -45,11 +44,17 @@ impl Default for Runtime {
 }
 
 impl DesignApp {
-    /// Whether the app asks for a newer release when it starts (off until the desktop app turns it on).
+    /// Whether the app looks for a newer release when it starts (off until the desktop app turns it on).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_startup_update_check(&mut self, on: bool) {
         self.updates_rt.startup_check = on;
     }
+}
+
+/// Whether an update window is open: they are modal.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn blocks_input(app: &DesignApp) -> bool {
+    app.updates_rt.updater.is_open()
 }
 
 pub(crate) fn check(app: &mut DesignApp) -> Result<Value, String> {
@@ -78,41 +83,40 @@ pub(crate) fn tick(app: &mut DesignApp, ctx: &egui::Context) {
         } else if rt.startup_check {
             rt.updater.check_at_start(ctx);
         }
-        rt.updater.tick(ctx);
+        let action = rt.updater.poll();
+        act(ctx, action);
     }
     #[cfg(target_arch = "wasm32")]
     let _ = (app, ctx);
 }
 
-/// Whether the check result window shows: for every status but idle (a requested check, and the
-/// first start after an update, which reports that it installed or why it failed), and never over
-/// the startup prompt.
+/// Carries out what the update windows asked for.
 #[cfg(not(target_arch = "wasm32"))]
-fn result_window_shows(status: &Status, prompt_open: bool) -> bool {
-    !prompt_open && !matches!(status, Status::Idle)
+fn act(ctx: &egui::Context, action: Action) {
+    match action {
+        Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+        Action::Exit => {
+            // The new version is starting, or a helper waits for this process to end. Close
+            // normally so the preferences are saved; the install only ran once
+            // nothing was unsaved. Exit anyway if the app has not ended soon.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                std::process::exit(0);
+            });
+        }
+        Action::None => {}
+    }
 }
 
 pub(crate) fn show(app: &mut DesignApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // The updater asks to close only when no document has unsaved changes; the install starts when the app exits.
+        // An installation waits until nothing is unsaved.
         let clean = !app.session.documents().iter().any(|d| d.is_dirty());
-        match app.updates_rt.updater.show_if(ctx, clean) {
-            Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
-            Action::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            Action::None => {}
-        }
-        // Help ▸ Check for Updates answers in the shared dialog, which follows the updater's status.
-        if result_window_shows(app.updates_rt.updater.status(), app.updates_rt.updater.prompt_open()) {
-            let dialog = CheckResultDialog::new(&crate::UPDATE_APP, env!("CARGO_PKG_VERSION"));
-            match dialog.show(ctx, app.updates_rt.updater.status()) {
-                CheckResultResponse::None => {}
-                CheckResultResponse::Close => app.updates_rt.updater.dismiss_status(),
-                CheckResultResponse::CheckAgain => app.updates_rt.check_requested = true,
-                // The next `show_if` asks the window to close once no document has unsaved changes.
-                CheckResultResponse::RestartToUpdate => app.updates_rt.updater.restart_to_update(),
-            }
-        }
+        let language = nodalia_update::Language::from_code(&app.ui.language);
+        let action = app.updates_rt.updater.show(ctx, language, clean);
+        act(ctx, action);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -143,6 +147,8 @@ pub(crate) fn show(app: &mut DesignApp, ctx: &egui::Context) {
 mod tests {
     use super::*;
     use designcraft_engine::Session;
+    #[cfg(not(target_arch = "wasm32"))]
+    use nodalia_update::egui::Status;
 
     #[test]
     fn default_runtime_is_idle() {
@@ -152,49 +158,51 @@ mod tests {
         #[cfg(not(target_arch = "wasm32"))]
         {
             assert!(!rt.startup_check);
-            assert!(!rt.updater.prompt_open());
+            assert!(!rt.updater.is_open());
             assert_eq!(rt.updater.status(), &Status::Idle);
         }
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
-    fn startup_prompt_shows_and_closes() {
-        let mut app = DesignApp::new(Session::new(), Default::default());
-        let ctx = egui::Context::default();
-        let release = craft_update::Release {
-            tag: "v99.0.0".into(),
-            version: craft_update::parse_version("99.0.0"),
-            name: "DesignCraft 99.0.0".into(),
-            html_url: "https://github.com/storytold/designcraft/releases/tag/v99.0.0".into(),
-            ..Default::default()
-        };
-        app.updates_rt.updater.offer(release);
-
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            show(&mut app, ui.ctx());
-        });
-        output.textures_delta.clear();
-        assert!(app.updates_rt.updater.prompt_open());
+    fn the_releases_are_this_apps_own() {
+        assert_eq!(crate::UPDATE_APP.repo, "danielmigueltejedor/pliego");
+        assert_eq!(crate::UPDATE_APP.version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
-    fn result_window_shows_every_status_but_idle() {
-        let shown = [
-            Status::Checking,
-            Status::UpToDate,
-            Status::Failed("no network".into()),
-            Status::Installing,
-            Status::Ready,
-            Status::Managed,
-            Status::Updated("0.2.0".into()),
-            Status::InstallFailed("disk full".into()),
-        ];
-        for status in &shown {
-            assert!(result_window_shows(status, false), "{status:?}");
-            assert!(!result_window_shows(status, true), "{status:?} over the prompt");
-        }
-        assert!(!result_window_shows(&Status::Idle, false));
+    fn startup_prompt_shows_holds_the_keys_and_closes() {
+        let mut app = DesignApp::new(Session::new(), Default::default());
+        let ctx = egui::Context::default();
+        app.updates_rt.updater = Updater::new(crate::UPDATE_APP).with_stamp(None);
+        app.updates_rt.updater.offer(nodalia_update::Release {
+            tag: "v99.0.0".into(),
+            version: "99.0.0".into(),
+            notes: String::new(),
+            page: "https://github.com/danielmigueltejedor/pliego/releases/tag/v99.0.0".into(),
+            asset: None,
+        });
+        let frame = |app: &mut DesignApp, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                show(app, ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        frame(&mut app, vec![]);
+        assert!(blocks_input(&app));
+        let escape = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, vec![escape]);
+        assert!(!blocks_input(&app));
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn a_silent_check_at_start_holds_no_keys() {
+        let mut app = DesignApp::new(Session::new(), Default::default());
+        app.updates_rt.updater.set_status(Status::Checking { user: false });
+        assert!(!blocks_input(&app));
+        app.updates_rt.updater.set_status(Status::Checking { user: true });
+        assert!(blocks_input(&app));
     }
 }
