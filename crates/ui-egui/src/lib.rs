@@ -10,7 +10,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub const UPDATE_APP: nodalia_update::App = nodalia_update::App {
     name: "Pliego",
-    repo: "danielmigueltejedor/pliego",
+    repo: "getnodalia/pliego",
     bundle: "DesignCraft.app",
     version: env!("CARGO_PKG_VERSION"),
     edition: None,
