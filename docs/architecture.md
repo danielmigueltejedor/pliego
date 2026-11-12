@@ -1,8 +1,8 @@
-# DesignCraft architecture
+# Pliego architecture
 
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (shared PDF writing) · **Target:** Adobe InDesign 2026
 
-How DesignCraft is built today. The design notes behind it are in `plan/architecture.md`
+How Pliego is built today. The design notes behind it are in `plan/architecture.md`
 (local, gitignored); this file describes what the code on `main` does. Agents: AGENTS.md has the
 rules (never crash, everything is a command, layering, clean-room).
 
@@ -114,4 +114,4 @@ builds (on manifest changes), packaging lint and the release workflow; `xtask ci
 | 2026-10-12 | minor | Documented orderly native exit recovery and the remaining cancelable Dock Quit gap |
 | 2026-10-10 | major | Created from the code on main (92649ff) and `plan/architecture.md` |
 
-PDF parsing and placed-page rasterization use the pinned `craft-pdf` reader. DesignCraft retains document, placement, layer and export policy; dependency checks and bounds are described in [pdf-backend.md](pdf-backend.md).
+PDF parsing and placed-page rasterization use the pinned `craft-pdf` reader. Pliego retains document, placement, layer and export policy; dependency checks and bounds are described in [pdf-backend.md](pdf-backend.md).

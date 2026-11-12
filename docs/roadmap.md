@@ -1,4 +1,4 @@
-# DesignCraft roadmap (detail)
+# Pliego roadmap (detail)
 
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-01 · **Change:** minor (independent parent page resizing, #1620; .indd and .indt open through indd-utils; text threads by hand; the gate waits on the Primary Text Frame page fixes) · **Target:** Adobe InDesign 2026 (21.6)
 
@@ -9,7 +9,7 @@ Opus 5.5 agent-hours (calibration in target-app-parity.md). Driving the app from
 
 ## Alpha gate
 
-InDesign's core workflows: what a layout professional does with it every day. DesignCraft is
+InDesign's core workflows: what a layout professional does with it every day. Pliego is
 alpha only when every one works end to end on macOS (its main platform) and the work saves and
 reopens. **Gate result (2026-10-10): fails, so the stage is pre-alpha.** Rows marked "no" are the
 alpha checklist; the partial rows don't block the workflow on macOS (there is a working path)
@@ -46,7 +46,7 @@ In order. Each closes a beta blocker from [gaps.md](gaps.md).
    a metric show what survives. 10–30 h.
 4. **IDML real-file corpus** (gap 3): a pinned corpus, a survival metric, and fixes for #193,
    #338, #339, #340. 60–100 h.
-5. **Composition oracle** (gap 4): synthetic stories set in InDesign 2026 vs DesignCraft;
+5. **Composition oracle** (gap 4): synthetic stories set in InDesign 2026 vs Pliego;
    optical kerning; the overset rule. 80–140 h.
 6. **Start on any GPU; find every installed font** (gaps 5, 6). 25–50 h.
 
