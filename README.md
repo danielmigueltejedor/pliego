@@ -6,7 +6,7 @@
     </picture>
   </a>
   <br><br>
-  <img src="https://raw.githubusercontent.com/danielmigueltejedor/pliego/main/assets/app-icon/hicolor/512x512/apps/ai.storyteller.designcraft.png" width="160" alt="Pliego">
+  <img src="https://raw.githubusercontent.com/danielmigueltejedor/pliego/main/assets/app-icon/hicolor/512x512/apps/ai.storyteller.designcraft.png" width="192" alt="Pliego">
   <h1>Pliego</h1>
   <p><strong>An editorial layout application for the Nodalia suite, built on the DesignCraft engine.</strong></p>
 
