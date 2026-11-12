@@ -42,7 +42,7 @@ so only enable it while you use it. Transport: `apps/designcraft/src/control_ser
 | `ui.pointer` | `{events:[{kind: down\|drag\|up\|move\|doubleclick, x, y, space?: "screen"\|"canvas", clicks?}], mods?}` | Drive the active tool through the same code path as the mouse; `clicks` on a `down` is the press count (3 = triple click); returns the selection, the tool and its cursor at the last event (e.g. `LoadedText`, `ThreadLink`, `Unthread`) |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Synthetic keyboard input (typing into a text frame) |
 | `ui.ime` | `{preedit?, active?: [start, end], commit?}` | Input method events as the system IME sends them: marked text (shown in place, `active` is the clause being converted, in characters) and the committed text (typed as one `text.insert`) |
-| `ui.paste` | `{text}` | What Ctrl/Cmd+V delivers from the system clipboard: text into the text being edited, or SVG markup (vector art copied in Illustrator, VectorCraft or Figma) as editable paths in the middle of the view |
+| `ui.paste` | `{text}` | What Ctrl/Cmd+V delivers from the system clipboard: text into the text being edited, or SVG markup (vector art copied in Illustrator, Pluma or Figma) as editable paths in the middle of the view |
 | `ui.move` / `ui.click` / `ui.drag` | screen points, `button?: left\|right\|middle`, `count?: 1–255` (click/drag, default 1), `steps?: positive integer` (drag, default 8) | Real egui pointer input — reaches every widget, menu and panel |
 | `ui.set` | `{brightness?, panel?, rulers?, guides?, frameEdges?, baselineGrid?, documentGrid?, textThreads?, screenMode?, zoom?, page?, fit?}` | UI state |
 | `ui.dialog.open` | `{id, fields?}` | Open a dialog by id (e.g. `paragraphStyleOptions` or `characterStyleOptions` with `{name, section}`, or `{new: true}` for a new style) |
@@ -136,12 +136,12 @@ read as `anchor`.
 - `window.workspace.new {name}`, `window.workspace.delete {name}` and `window.workspace.reset`
   (also `ui.dock.reset`) are `window.newWorkspace`, `window.deleteWorkspace` and
   `window.resetWorkspace`. `window.workspace {name}` switches workspaces as before.
-- `ui.dock {action}` or `ui.dock {operation, …}` is the shape LightCraft, PDFCraft, CADCraft
+- `ui.dock {action}` or `ui.dock {operation, …}` is the shape Luz, Papel, Forja
   and SoundCraft use: `open`, `close`, `activate`, `float {rect}`, `moveFloating {rect}`,
   `move {target, zone?, before?}`, `setStackOpen {open}`, `resizeStack {height}` and
   `resizeSplit {path, size}`, with `rect` as `[x, y, width, height]`.
 - `window.panel.window` (a panel into or out of its own window) and `window.workspace.lock` are
-  not available in DesignCraft and return an error.
+  not available in Pliego and return an error.
 - `window.collapseToIcons` collapses every dock column to icons.
 
 Panel IDs are stable across themes. Invalid IDs, non-finite or invalid geometry, and

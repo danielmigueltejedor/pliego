@@ -4,7 +4,7 @@
 
 Goal: the Chinese, Japanese and Korean typesetting that InDesign offers with its East Asian
 feature set (the "Japanese/CJK" feature set, `Feature Set Locale Setting` 257), so that a
-DesignCraft document can be set to the standard of a Japanese, Chinese or Korean publisher,
+Pliego document can be set to the standard of a Japanese, Chinese or Korean publisher,
 round-trip through IDML, and export correct PDF and EPUB.
 
 It builds on the CJK import and composition described in [cjk-typography.md](cjk-typography.md)
@@ -36,7 +36,7 @@ presets or tables are copied. Our default mojikumi and kinsoku tables are built 
 | Vertical text, upright CJK, rotated Latin | done: story direction per story (frames of a thread agree; IDML `StoryOrientation`); glyphs turned by transforms; arrow keys follow the vertical lines |
 | Vertical metrics and shaping | done: upright runs shaped top to bottom (`vert`; `vkrn`/`vpal` when asked) with `vmtx`/`VORG` advances and origins, centred on the ideographic em box (`BASE`, else OS/2); turned runs shaped horizontally, without `vrt2`; Horizontal Kana (`hkna`) takes the vertical kana (`vkna`) in upright runs. Default location of variable fonts only (no `VVAR`) |
 | Kinsoku | named (hard, soft, Chinese, Korean) and custom kinsoku sets, bunri-kinshi, rensuuji, hanging punctuation (regular, force); without a set, fixed no-start / no-end lists and a break anywhere between CJK characters; kinsoku type (push in / push out priorities) kept but not applied |
-| Korean line breaking | at spaces (Hangul everywhere, hanja in Korean text); per-paragraph character-based breaking (`koreanCharBreaks`); DesignCraft-only, not in IDML |
+| Korean line breaking | at spaces (Hangul everywhere, hanja in Korean text); per-paragraph character-based breaking (`koreanCharBreaks`); Pliego-only, not in IDML |
 | Mojikumi | applied in composition: the built-in base sets (line end half-width, line end one em, Simplified and Traditional Chinese) and the document's tables with their override rows, kept through IDML; Preflight notes tables it can't apply. In the Japanese sets consecutive punctuation closes up (JLREQ 3.1.4: 」。, 「『 touch; 」・ a quarter em, 」「 half an em apart). Still open: 、・ and ・・ take the sum of both blanks in JLREQ (Table 1 notes) |
 | Aki, tsume, jidori | done ([cjk-typography.md](cjk-typography.md)) |
 | Character alignment, leading model | em box top / centre / bottom, ICF top / bottom (`BASE` `icft`/`icfb`, else the em box inset by 5%), roman baseline; aki above / below, centre (centre down as centre); under aki below a line's leading is the space to the line below it; with the Japanese composers (`Composer::Japanese`, `JapaneseSingleLine`, IDML `HL Composer J` / `HL Single J`), the others set lines baseline to baseline on the Roman baseline |
@@ -162,14 +162,14 @@ Jidori, tsume, aki before and after, em-box alignment and the other leading mode
   full-width symbols, punctuation, Latin, numerals) beside custom sets.
 - **Missing glyphs**: InDesign doesn't substitute fonts per character: a character the applied
   font lacks shows as the font's missing-glyph box, prints that way and is a Preflight error.
-  DesignCraft does the same, with a document setting (Draw Missing Glyphs from Fallback Fonts)
+  Pliego does the same, with a document setting (Draw Missing Glyphs from Fallback Fonts)
   that draws such characters from fallback fonts instead.
 - **Language-aware fallback** (when that setting is on): Japanese, Simplified Chinese, Traditional
   Chinese and Korean each have their own fallback chain of system fonts (Japanese: the craft-fonts
   Japanese faces first); `locl` follows the character language (IDML language names).
 - **No CJK fonts in the repo.** CJK fonts are large (15–25 MB each even subset) and documents
   should name the fonts they use. The Japanese UI and document faces come from the optional
-  craft-fonts build input when DesignCraft is built with it (release builds are).
+  craft-fonts build input when Pliego is built with it (release builds are).
 - **Document fonts**: fonts in a `Document Fonts` folder beside an opened `.designcraft` or
   `.idml` file are available to that document only, ahead of system fonts, and unloaded when it
   closes. File › Package copies the document's fonts into the package's `Document Fonts` folder
@@ -277,7 +277,7 @@ Each follows what an InDesign user expects.
 3. **PDF vertical text** keeps transformed horizontal glyphs (correct-looking, copyable via
    ActualText) rather than vertical CID fonts (`Identity-V`).
 4. **No CJK fonts in the repo**; documents carry theirs in `Document Fonts`, scoped to the
-   document as in InDesign. DesignCraft embeds Japanese UI and document faces only when built with
+   document as in InDesign. Pliego embeds Japanese UI and document faces only when built with
    the optional craft-fonts input (release builds are).
 5. **Package copies every font that draws text**, fallback fonts included (when the document
    draws missing glyphs from them), so a package reproduces what is on screen.

@@ -2,7 +2,7 @@
 
 > **Last reviewed:** 2026-10-11 · **Last updated:** 2026-11-04 · **Change:** minor (pt-BR catalog filled; Russian listed; Esperanto text language; Hungarian interface catalog, bundled-font coverage and flyout regression checks; Swedish interface) · **Target:** Adobe InDesign 2026 (21.6)
 
-Per-language status of the DesignCraft interface and of document typesetting in each script.
+Per-language status of the Pliego interface and of document typesetting in each script.
 Script-specific typesetting detail: [cjk.md](cjk.md), [cjk-typography.md](cjk-typography.md),
 [arabic-typography.md](arabic-typography.md). Overall numbers: [target-app-parity.md](target-app-parity.md).
 
@@ -16,7 +16,7 @@ Untranslated strings fall back to English. A script (2026-10-10) built the set o
 interface strings as the union of every catalog's keys, every engine command label and every
 literal passed to `tr`/`t` in the UI crate: **1,724 strings**. A further ~145 capitalized literals
 in the UI crate appear in no catalog (some are test data or proper names), so the true total is
-somewhat higher and every percentage below is a slight overestimate. Help: DesignCraft has no
+somewhat higher and every percentage below is a slight overestimate. Help: Pliego has no
 help content in any language (Help ▸ opens the project's pages).
 
 Missing translations normally fall back to English and are reported without blocking a build.
@@ -96,13 +96,13 @@ for a story.
 | Georgian | ka | 1,724 (~100%: every catalog key plus the command labels the others lack), count captions as `noun: n` | partial (reviewed by a native speaker) |
 | Swedish | sv | 2,857 of 2,891 (99%, 2026-11-01 missing-translations report): menus, panels, dialogs and messages; singular for a count of one; AI-drafted with Claude Code from the English source, spot-checked by a native speaker (not every string) | partial |
 
-DesignCraft ships **8** interface languages beyond the twelve; InDesign ships 17 beyond its
+Pliego ships **8** interface languages beyond the twelve; InDesign ships 17 beyond its
 eight of the twelve (cs, da, el, en_GB, fi, hu, it, nb, nl, pl, ro, ru, sq, sv, tr, uk, zh_TW).
 
 ## Document languages
 
 InDesign 2026 hyphenates and spell-checks ~40 languages (Hunspell and Duden dictionaries).
-DesignCraft hyphenates **English, Danish, Dutch, French, German (2006 reform), Greek, Italian, Norwegian, Portuguese and Spanish** and spell-checks **English** only. Text language
+Pliego hyphenates **English, Danish, Dutch, French, German (2006 reform), Greek, Italian, Norwegian, Portuguese and Spanish** and spell-checks **English** only. Text language
 can be set per paragraph and character (Properties, Character panel) and drives quotes and
 locale shaping; Esperanto is offered too (not hyphenated yet, #1201). See
 [typography-parity.md](typography-parity.md).
