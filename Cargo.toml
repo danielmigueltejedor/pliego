@@ -18,7 +18,7 @@ craft-keymap = { git = "https://github.com/getnodalia/foundation", rev = "92d392
 # Separations, ink coverage and the ink manager; same revision as craft-pdf and the krilla patch.
 craft-prepress = { git = "https://github.com/getnodalia/foundation", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0", features = ["flatten"] }
 # In-app updates from this app's GitHub releases, with the update windows for egui.
-nodalia-update = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "b2feb66c7f7b516613c4f2c74091baddb5a50f14", features = ["egui"] }
+nodalia-update = { git = "https://github.com/danielmigueltejedor/nodalia-design", rev = "ed8c8829a3dad688e17ce00ca1e15416bc7ba16e", features = ["egui"] }
 # internal
 designcraft-geom = { path = "crates/geom" }
 designcraft-color = { path = "crates/color" }
